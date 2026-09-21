@@ -1,0 +1,82 @@
+name: Bug Bounty Recon
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  recon:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y golang
+
+          go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+          go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest
+          go install github.com/projectdiscovery/httpx/cmd/httpx@latest
+          go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
+      - name: Create directories
+        run: |
+          mkdir -p results/{subdomains,dns,http,urls,js,nuclei}
+
+      - name: Subdomain enumeration
+        run: |
+          subfinder \
+            -d example.com \
+            -silent \
+            -all \
+            -o results/subdomains/subdomains.txt
+
+      - name: DNS resolution
+        run: |
+          dnsx \
+            -l results/subdomains/subdomains.txt \
+            -silent \
+            -a \
+            -resp \
+            -o results/dns/resolved.txt
+
+      - name: HTTP probing
+        run: |
+          httpx \
+            -l results/subdomains/subdomains.txt \
+            -silent \
+            -follow-redirects \
+            -status-code \
+            -title \
+            -tech-detect \
+            -web-server \
+            -content-length \
+            -o results/http/httpx.txt
+
+      - name: Extract live URLs
+        run: |
+          httpx \
+            -l results/subdomains/subdomains.txt \
+            -silent \
+            -follow-redirects \
+            -o results/http/live.txt
+
+      - name: Nuclei scan
+        run: |
+          nuclei \
+            -l results/http/live.txt \
+            -severity info,low,medium,high,critical \
+            -o results/nuclei/nuclei.txt
+
+      - name: Save results
+        uses: actions/upload-artifact@v4
+        with:
+          name: recon-results
+          path: results/
